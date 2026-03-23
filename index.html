@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mermaid Diagram Editor</title>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg">
+
+    <!-- CodeMirror 5 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.css"
+          integrity="sha384-zaeBlB/vwYsDRSlFajnDd7OydJ0cWk+c2OWybl3eSUf6hW2EbhlCsQPqKr3gkznT" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/theme/dracula.min.css"
+          integrity="sha384-ccdJwIIg/K0Ab6aXF4MPACh7ckk61tvQFTrfkhXZEALgAETURNZIAuQLcS/aPbrM" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/dialog/dialog.min.css"
+          integrity="sha384-MomRjC6IKuGHk2XIFKXAwFx0gytd6+ZsF9pnFM3JWZV5izBqPgoLapxRqG1h5IKm" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/hint/show-hint.min.css"
+          integrity="sha384-TU/qRI67N04B589luYdn1ZMRIGgJic3GB1WsvLJTRh92VO26vpxI4dCKiDtsR4fw" crossorigin="anonymous">
+
+    <!-- App CSS -->
+    <link rel="stylesheet" href="./css/styles.css">
+
+    <!-- CodeMirror core + addons -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.js"
+            integrity="sha384-zY7LskBWhR/9yBYvvefVjyNub/c+0+euc8aTrE7kPDGfvoJs/61uUASfSBkpdIwN" crossorigin="anonymous" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/edit/matchbrackets.min.js"
+            integrity="sha384-LjCI3E8qhhxXZvu7+FCvqx9eZYSowFvuJ7z54KsgI/BDPGKEuysqCg/vYiKHvC4Y" crossorigin="anonymous" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/edit/closebrackets.min.js"
+            integrity="sha384-69mJoUoPPF/C7qPs6lLjvXvrt6w225+rmxWqGO3a1glVjITdnnwPQOtG9FRTd2Ni" crossorigin="anonymous" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/comment/comment.min.js"
+            integrity="sha384-B6Af6BES5glvxvAPc9Vrl9t1lHx1k3iL8AcT1XmsmlEVZudSW8E+8CA1TxVbdQbj" crossorigin="anonymous" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/search/searchcursor.min.js"
+            integrity="sha384-ILkploZWukdp1VMmzMnE+32H0mgy2e+w29evc4grALGOqIRGBgbBGrwkX7a6zK7y" crossorigin="anonymous" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/search/search.min.js"
+            integrity="sha384-v64L7YTJ/ullw5v36qIJcvWAxuEnRGu9E326vUV3Ro7sx4HCZHIDTphKO53htazT" crossorigin="anonymous" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/search/jump-to-line.min.js"
+            integrity="sha384-Hs0iLvujdeUuFY+vs6PlDtVV6VUJpKfJUAnjL6C84Xq4qjsVuCPKbm6ISywgDzP0" crossorigin="anonymous" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/dialog/dialog.min.js"
+            integrity="sha384-3COleknUtlGKoEOR9Wm7WKVRyS6ljwYU2x1ebD8nd6ujaLMqwY+q3F8+yDcefbXr" crossorigin="anonymous" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/hint/show-hint.min.js"
+            integrity="sha384-qCnKPgNYgVO8RO19jShRRAfU75+KVnN1cQy+8CPX/TTwJsUEJ/EpnwKx2UOyLx8c" crossorigin="anonymous" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/display/placeholder.min.js"
+            integrity="sha384-l05Wp1XtebCkGEIvEqqocN2o/YCyo0osxmJkB2k1cKkA29Au//d29LAph5kRro5I" crossorigin="anonymous" defer></script>
+
+</head>
+
+<body>
+<noscript>
+    <p style="padding: 1rem; font-family: sans-serif;">This application requires JavaScript. Please enable it in your browser settings.</p>
+</noscript>
+
+<!-- ── App header ─────────────────────────────────────────────────────────── -->
+<header class="app-header">
+    <div class="app-header-title">
+        <!-- Mermaid-style logo icon -->
+        <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 64 64">
+            <defs>
+                <linearGradient id="logo-bg" x1="10" y1="8" x2="54" y2="56" gradientUnits="userSpaceOnUse">
+                    <stop offset="0" stop-color="#eff6ff"/>
+                    <stop offset="1" stop-color="#dbeafe"/>
+                </linearGradient>
+                <linearGradient id="logo-accent" x1="16" y1="14" x2="48" y2="50" gradientUnits="userSpaceOnUse">
+                    <stop offset="0" stop-color="#38bdf8"/>
+                    <stop offset="1" stop-color="#2563eb"/>
+                </linearGradient>
+            </defs>
+            <rect x="4" y="4" width="56" height="56" rx="16" fill="url(#logo-bg)"/>
+            <rect x="4.5" y="4.5" width="55" height="55" rx="15.5" fill="none" stroke="#93c5fd"/>
+            <g fill="none" stroke="url(#logo-accent)" stroke-linecap="round" stroke-linejoin="round" stroke-width="4.5">
+                <rect x="15" y="15" width="14" height="14" rx="3"/>
+                <rect x="35" y="15" width="14" height="14" rx="3"/>
+                <rect x="15" y="35" width="14" height="14" rx="3"/>
+                <path d="M22 29v6"/>
+                <path d="M29 22h6"/>
+                <path d="M29 42l13-13"/>
+            </g>
+        </svg>
+        Mermaid Diagram Editor
+    </div>
+
+    <div class="header-spacer"></div>
+
+    <input id="file-input" type="file" accept=".png,.svg,.mmd,.md,image/png,image/svg+xml,text/plain" class="hidden" aria-label="Import file">
+
+    <!-- Theme toggle -->
+    <button id="theme-toggle" type="button" class="header-btn" title="Toggle dark / light theme">
+        <svg id="theme-icon-moon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+        <svg id="theme-icon-sun" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" class="hidden">
+            <circle cx="12" cy="12" r="5"/>
+            <line x1="12" y1="1"  x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+            <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+        </svg>
+    </button>
+
+    <!-- GitHub link -->
+    <a href="https://github.com/dusklight/vibe-mermaid-editor" target="_blank" rel="noopener noreferrer" class="header-btn" title="View on GitHub" aria-label="View on GitHub">
+        <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38
+                     0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13
+                     -.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66
+                     .07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15
+                     -.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 2-.27
+                     c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12
+                     .51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48
+                     0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8
+                     c0-4.42-3.58-8-8-8z"/>
+        </svg>
+    </a>
+
+</header>
+
+<!-- ── Two-pane layout ─────────────────────────────────────────────────────── -->
+<div class="editor-main">
+
+    <!-- ── Editor pane ──────────────────────────────────────────────────── -->
+    <div id="editor-pane" class="editor-pane">
+
+        <!-- Editor toolbar -->
+        <div class="pane-toolbar">
+            <span class="pane-toolbar-label">Editor</span>
+            <div class="tb-sep"></div>
+
+            <!-- Template selector -->
+            <select id="template-select" class="tb-select" title="Insert a template">
+                <option value="">Templates…</option>
+                <option value="flowchart">Flowchart</option>
+                <option value="sequence">Sequence Diagram</option>
+                <option value="class">Class Diagram</option>
+                <option value="state">State Diagram</option>
+                <option value="er">ER Diagram</option>
+                <option value="gantt">Gantt Chart</option>
+                <option value="pie">Pie Chart</option>
+                <option value="mindmap">Mind Map</option>
+                <option value="gitgraph">Git Graph</option>
+                <option value="timeline">Timeline</option>
+                <option value="quadrant">Quadrant Chart</option>
+                <option value="xychart">XY Chart</option>
+                <option value="userjourney">User Journey</option>
+                <option value="c4">C4 Diagram</option>
+            </select>
+
+            <div class="tb-sep"></div>
+
+            <!-- Render controls -->
+            <label class="tb-toggle" title="Automatically render while typing">
+                <input id="auto-render-toggle" type="checkbox" checked>
+                <span>Auto</span>
+            </label>
+
+            <button id="btn-render" type="button" class="tb-btn" title="Render now (Ctrl+Enter)">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                    <polygon points="5 3 19 12 5 21 5 3"/>
+                </svg>
+                Render
+            </button>
+
+            <!-- Copy source -->
+            <button id="btn-copy" type="button" class="tb-btn" title="Copy source to clipboard">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                    <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+                Copy
+            </button>
+
+            <!-- Line wrap -->
+            <button id="btn-wrap" type="button" class="tb-btn" title="Enable line wrap">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                    <path d="M3 6h18M3 12h15a3 3 0 0 1 0 6h-4"/><polyline points="14 15 11 18 14 21"/>
+                </svg>
+                Wrap
+            </button>
+
+            <!-- New -->
+            <button id="btn-new" type="button" class="tb-btn" title="New diagram (clears editor)">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                    <line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/>
+                </svg>
+                New
+            </button>
+        </div>
+
+        <div class="editor-tabs-bar">
+            <button id="btn-tabs-scroll-left" type="button" class="tab-scroll-btn" title="Scroll tabs left" aria-label="Scroll tabs left" hidden>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <polyline points="15 18 9 12 15 6"/>
+                </svg>
+            </button>
+            <div id="editor-tabs" class="editor-tabs" role="tablist" aria-label="Open Mermaid files"></div>
+            <button id="btn-tabs-scroll-right" type="button" class="tab-scroll-btn" title="Scroll tabs right" aria-label="Scroll tabs right" hidden>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <polyline points="9 18 15 12 9 6"/>
+                </svg>
+            </button>
+            <button id="btn-add-tab" type="button" class="tab-add-btn" title="Open a new tab">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                    <line x1="12" y1="5" x2="12" y2="19"/>
+                    <line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+            </button>
+        </div>
+
+        <!-- CodeMirror host -->
+        <div class="editor-area">
+            <textarea id="editor-textarea"></textarea>
+        </div>
+
+        <!-- Error detail popup (shown above the status bar on click) -->
+        <div id="status-error-popup" class="status-error-popup" hidden>
+            <pre id="status-error-popup-text" class="status-error-popup-text"></pre>
+            <div class="status-error-popup-footer">
+                <button id="status-error-goto" class="status-error-goto-btn" hidden>↑ Go to line</button>
+            </div>
+        </div>
+
+        <!-- Status bar -->
+        <div class="editor-status">
+            <span id="status-line">Ln 1, Col 1</span>
+            <span class="status-badge" id="status-type">diagram</span>
+            <button class="status-error" id="status-error" aria-haspopup="true" aria-expanded="false" title="Click to expand error details" hidden></button>
+        </div>
+
+        <!-- Drop overlay (import by drag) -->
+        <div id="editor-drop-overlay" class="drop-overlay">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            Drop PNG / SVG / .mmd to import
+        </div>
+    </div>
+
+    <!-- ── Splitter ──────────────────────────────────────────────────────── -->
+    <div id="pane-splitter" class="pane-splitter" title="Drag to resize · Double-click to reset"></div>
+
+    <!-- ── Preview pane ─────────────────────────────────────────────────── -->
+    <div class="preview-pane">
+
+        <!-- Preview toolbar -->
+        <div class="preview-toolbar">
+            <span class="pane-toolbar-label">Preview</span>
+            <div class="tb-sep"></div>
+
+            <!-- Zoom controls -->
+            <button id="btn-zoom-out" type="button" class="tb-btn" title="Zoom out (scroll wheel)">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    <line x1="8" y1="11" x2="14" y2="11"/>
+                </svg>
+            </button>
+
+            <button id="zoom-display" type="button" title="Click to set zoom level">100%</button>
+
+            <button id="btn-zoom-in" type="button" class="tb-btn" title="Zoom in">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    <line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>
+                </svg>
+            </button>
+
+            <button id="btn-fit" type="button" class="tb-btn" title="Fit diagram to window (Ctrl+Shift+F)">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                    <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
+                    <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+                </svg>
+                Fit
+            </button>
+
+            <button id="btn-reset-zoom" type="button" class="tb-btn" title="Reset to 100%">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                    <path d="M3 3v5h5"/>
+                </svg>
+                100%
+            </button>
+
+            <div class="tb-sep"></div>
+
+            <!-- Mermaid theme -->
+            <div class="mmd-theme-wrap">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <circle cx="12" cy="12" r="5"/>
+                    <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+                </svg>
+                <select id="mermaid-theme" class="mmd-theme-select" title="Mermaid diagram theme">
+                    <option value="default">Default</option>
+                    <option value="neutral">Neutral</option>
+                    <option value="dark">Dark</option>
+                    <option value="forest">Forest</option>
+                    <option value="base">Base</option>
+                </select>
+            </div>
+
+            <div class="mmd-layout-wrap">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                    <rect x="3" y="4" width="6" height="6" rx="1"></rect>
+                    <rect x="15" y="4" width="6" height="6" rx="1"></rect>
+                    <rect x="9" y="14" width="6" height="6" rx="1"></rect>
+                    <path d="M9 7h6"></path>
+                    <path d="M12 10v4"></path>
+                </svg>
+                <select id="layout-select" class="mmd-layout-select" title="Diagram layout engine">
+                    <option value="elk">ELK</option>
+                    <option value="tidy-tree">Tidy tree</option>
+                    <option value="cose-bilkent">Cose Bilkent</option>
+                    <option value="dagre">Dagre</option>
+                </select>
+            </div>
+
+            <details id="layout-advanced" class="layout-advanced">
+                <summary>Layout options</summary>
+                <div class="layout-advanced-panel">
+                    <label class="layout-option-row">
+                        <input id="layout-inherit-dir" type="checkbox">
+                        <span>Subgraphs inherit direction</span>
+                    </label>
+                    <label class="layout-option-stack">
+                        <span>ELK node placement</span>
+                        <select id="elk-node-placement" class="layout-option-select">
+                            <option value="BRANDES_KOEPF">Balanced</option>
+                            <option value="LINEAR_SEGMENTS">Linear Segments</option>
+                            <option value="NETWORK_SIMPLEX">Network Simplex</option>
+                            <option value="SIMPLE">Simple</option>
+                        </select>
+                    </label>
+                    <label class="layout-option-row">
+                        <input id="elk-merge-edges" type="checkbox">
+                        <span>Merge parallel edges</span>
+                    </label>
+                </div>
+            </details>
+
+            <div class="file-actions">
+                <button id="btn-import" type="button" class="tb-btn" title="Import from PNG, SVG, or .mmd file">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="17 8 12 3 7 8"/>
+                        <line x1="12" y1="3" x2="12" y2="15"/>
+                    </svg>
+                    Import
+                </button>
+
+                <!-- Save button + dropdown -->
+                <div class="save-btn-wrap">
+                    <button id="btn-save" type="button" title="Export diagram">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                        </svg>
+                        Save / Export
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <polyline points="6 9 12 15 18 9"/>
+                        </svg>
+                    </button>
+
+                    <div id="save-dropdown" class="save-dropdown" role="menu">
+
+                    <!-- PNG group -->
+                    <div class="save-dropdown-group">
+                        <div class="save-dropdown-label">Save as PNG</div>
+                        <button type="button" role="menuitem" class="save-dropdown-item" data-action="png-1x">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                                <circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+                            </svg>
+                            PNG — natural size (1×)
+                        </button>
+                        <button type="button" role="menuitem" class="save-dropdown-item" data-action="png-2x">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                                <circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+                            </svg>
+                            PNG — retina (2×)
+                        </button>
+                        <button type="button" role="menuitem" class="save-dropdown-item" data-action="png-zoom">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                                <circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+                            </svg>
+                            PNG — current zoom
+                            <span class="zoom-val">100%</span>
+                        </button>
+                    </div>
+
+                    <!-- SVG group -->
+                    <div class="save-dropdown-group">
+                        <div class="save-dropdown-label">Save as SVG</div>
+                        <button type="button" role="menuitem" class="save-dropdown-item" data-action="svg">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+                            </svg>
+                            SVG — vector (scalable)
+                        </button>
+                    </div>
+
+                    <!-- Preview group -->
+                    <div class="save-dropdown-group">
+                        <div class="save-dropdown-label">Preview in new tab</div>
+                        <button type="button" role="menuitem" class="save-dropdown-item" data-action="preview-png">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                                <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                            </svg>
+                            PNG (1×)
+                        </button>
+                        <button type="button" role="menuitem" class="save-dropdown-item" data-action="preview-png-zoom">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                                <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                            </svg>
+                            PNG — current zoom
+                            <span class="zoom-val">100%</span>
+                        </button>
+                        <button type="button" role="menuitem" class="save-dropdown-item" data-action="preview-svg">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                                <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                            </svg>
+                            SVG
+                        </button>
+                    </div>
+
+                    <div style="padding:6px 12px 8px; font-size:0.67rem; color:var(--status-text);">
+                        ✦ Mermaid source embedded in all exports — drag back to import.
+                    </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Diagram canvas area -->
+        <div id="preview-area" class="preview-area">
+            <div id="diagram-wrapper"></div>
+        </div>
+
+        <!-- Preview drop overlay -->
+        <div id="preview-drop-overlay" class="drop-overlay">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            Drop exported diagram to import source
+        </div>
+    </div>
+
+</div><!-- /.editor-main -->
+
+<!-- ── Keyboard shortcut reference (tooltip-accessible) ───────────────────── -->
+<div id="shortcut-ref" class="sr-only" role="note" aria-label="Keyboard shortcuts">
+    Ctrl+Enter: Render now when Auto is off | Ctrl+S: Save PNG | Ctrl+Shift+S: Save SVG |
+    Ctrl+Shift+F: Fit to screen | Ctrl+T: New tab | Ctrl+W: Close tab |
+    Ctrl+Space: Autocomplete |
+    Ctrl+F: Find | Ctrl+/: Toggle comment
+</div>
+
+<!-- App entry-point -->
+<script src="./js/app.js" defer></script>
+
+</body>
+</html>
