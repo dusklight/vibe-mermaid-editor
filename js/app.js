@@ -13,80 +13,230 @@
     };
 
     try {
+        // Single place to change when bumping the Mermaid build; the ELK layout
+        // engine ships inside Mermaid, so only the optional tidy-tree layout
+        // loader has to be fetched separately.
+        const MERMAID_VERSION = '12.3.0';
         const [
             { default: mermaid },
-            { default: elkLayouts },
             { default: tidyTreeLayouts },
         ] = await Promise.all([
-            import('https://cdn.jsdelivr.net/npm/mermaid@11.13.0/dist/mermaid.esm.min.mjs'),
-            import('https://cdn.jsdelivr.net/npm/@mermaid-js/layout-elk@0.2.0/dist/mermaid-layout-elk.esm.min.mjs'),
-            import('https://cdn.jsdelivr.net/npm/@mermaid-js/layout-tidy-tree@0.2.0/dist/mermaid-layout-tidy-tree.esm.min.mjs'),
+            import(`https://cdn.jsdelivr.net/npm/mermaid@${MERMAID_VERSION}/dist/mermaid.esm.min.mjs`),
+            import('https://cdn.jsdelivr.net/npm/@mermaid-js/layout-tidy-tree@1.0.1/dist/mermaid-layout-tidy-tree.esm.min.mjs'),
         ]);
 
         // ── Shared utility: parse diagram type from source text ──────────────────
+        /**
+         * Return the diagram keyword of a source string.
+         * YAML frontmatter blocks (`---\nconfig: …\n---`) and `%%` comments are skipped,
+         * so directives at the top of a diagram do not masquerade as the diagram type.
+         * @param {string} src
+         * @returns {string}
+         */
         function parseDiagramType(src) {
-            for (const rawLine of String(src || '').split(/\r?\n/)) {
+            const lines = String(src || '').split(/\r?\n/);
+            let seenKeywordLine = false;
+            let inFrontmatter  = false;
+
+            for (const rawLine of lines) {
                 const line = rawLine.trim();
-                if (!line || line.startsWith('%%')) continue;
-                const m = line.match(/^([\w-]+)/);
-                return m ? m[1] : 'diagram';
+                if (!line) continue;
+
+                // Frontmatter is only valid before the first diagram keyword line.
+                if (!seenKeywordLine && line === '---') {
+                    inFrontmatter = !inFrontmatter;
+                    continue;
+                }
+                if (inFrontmatter) continue;
+                if (line.startsWith('%%')) continue;
+
+                const m = line.match(/^!?([\w-]+)/);
+                if (!m) continue;
+                seenKeywordLine = true;
+                return m[1];
             }
             return 'diagram';
         }
 
         const MermaidEditorMermaidApi = (() => {
-mermaid.registerLayoutLoaders(elkLayouts);
 mermaid.registerLayoutLoaders(tidyTreeLayouts);
 
+// Theme names implemented by the loaded Mermaid build.
+const MERMAID_THEMES = Object.freeze([
+    'default', 'neutral', 'base', 'dark', 'forest',
+    'neo', 'neo-dark', 'redux', 'redux-dark', 'redux-color', 'redux-dark-color',
+]);
+const DARK_MERMAID_THEMES = new Set([
+    'dark', 'neo-dark', 'redux-dark', 'redux-dark-color',
+]);
+
+const SUPPORTED_LAYOUTS = new Set(['elk', 'tidy-tree', 'cose-bilkent', 'dagre']);
+const SUPPORTED_LOOKS   = new Set(['auto', 'classic', 'neo', 'handDrawn']);
+const SUPPORTED_PLACEMENTS = new Set(['BRANDES_KOEPF', 'LINEAR_SEGMENTS', 'NETWORK_SIMPLEX', 'SIMPLE']);
+const SUPPORTED_BIT_ORDERS = new Set(['ascending', 'descending']);
+const SUPPORTED_MINDMAP_COLOR_BY = new Set(['branch', 'depth']);
+
+// Layout engines that some diagram types reject (measured against the loaded
+// Mermaid build). All other types either support the engine or ignore the setting.
+const LAYOUT_UNSUPPORTED_BY_DIAGRAM = new Map([
+    // The bundled ELK engine has no mindmap layout; passing it makes
+    // the cytoscape-based mindmap renderer throw ("reading 'pe'").
+    ['elk', new Set(['mindmap'])],
+    ['cose-bilkent', new Set([
+        'flowchart', 'graph', 'classDiagram', 'classDiagram-v2', 'stateDiagram',
+        'stateDiagram-v2', 'erDiagram', 'requirementDiagram', 'usecase',
+        'usecase-beta', 'agentflow', 'agentflow-beta', 'swimlane', 'swimlane-beta',
+    ])],
+    ['tidy-tree', new Set([
+        'agentflow', 'agentflow-beta', 'swimlane', 'swimlane-beta',
+    ])],
+]);
+
+// Defaults matching the loaded Mermaid build: ELK layout engine,
+// library-managed look per diagram type.
 const DEFAULT_OPTIONS = Object.freeze({
-    layout: 'dagre',
+    layout: 'elk',
+    look: 'auto',
     inheritDir: false,
     elkNodePlacementStrategy: 'BRANDES_KOEPF',
     elkMergeEdges: false,
+    elkOrientFeedbackEdges: true,
+    elkKeepEntryNodeOnTop: false,
+    elkStraightenEdges: true,
+    elkLineHops: true,
+    flowchartStepNumbers: false,
+    flowchartStepDuration: 1,
+    mindmapColorBy: 'branch',
+    packetBitOrder: 'ascending',
+    xyChartShowLegend: true,
+    xyChartShowDataLabel: false,
 });
-const SUPPORTED_LAYOUTS = new Set(['elk', 'tidy-tree', 'cose-bilkent', 'dagre']);
 
 let currentOptions = { ...DEFAULT_OPTIONS };
 let renderHost = null;
 
-function normalizeLayoutOptions(nextOptions = {}) {
-    const merged = {
-        ...DEFAULT_OPTIONS,
-        ...nextOptions,
-    };
-
-    if (!SUPPORTED_LAYOUTS.has(merged.layout)) {
-        merged.layout = DEFAULT_OPTIONS.layout;
-    }
-
-    return merged;
+function asBoolean(value, fallback) {
+    return typeof value === 'boolean' ? value : fallback;
 }
 
-function buildConfig(theme, htmlLabels) {
-    const useElk = currentOptions.layout === 'elk';
-    const useDagre = currentOptions.layout === 'dagre';
+function asEnum(value, allowed, fallback) {
+    return allowed.has(value) ? value : fallback;
+}
+
+function asStepDuration(value, fallback) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(30, Math.max(0.1, n));
+}
+
+function normalizeLayoutOptions(nextOptions = {}) {
+    const d = DEFAULT_OPTIONS;
     return {
+        layout:                   asEnum(nextOptions.layout, SUPPORTED_LAYOUTS, d.layout),
+        look:                     asEnum(nextOptions.look, SUPPORTED_LOOKS, d.look),
+        inheritDir:               asBoolean(nextOptions.inheritDir, d.inheritDir),
+        elkNodePlacementStrategy: asEnum(nextOptions.elkNodePlacementStrategy, SUPPORTED_PLACEMENTS, d.elkNodePlacementStrategy),
+        elkMergeEdges:            asBoolean(nextOptions.elkMergeEdges, d.elkMergeEdges),
+        elkOrientFeedbackEdges:   asBoolean(nextOptions.elkOrientFeedbackEdges, d.elkOrientFeedbackEdges),
+        elkKeepEntryNodeOnTop:    asBoolean(nextOptions.elkKeepEntryNodeOnTop, d.elkKeepEntryNodeOnTop),
+        elkStraightenEdges:       asBoolean(nextOptions.elkStraightenEdges, d.elkStraightenEdges),
+        elkLineHops:              asBoolean(nextOptions.elkLineHops, d.elkLineHops),
+        flowchartStepNumbers:     asBoolean(nextOptions.flowchartStepNumbers, d.flowchartStepNumbers),
+        flowchartStepDuration:    asStepDuration(nextOptions.flowchartStepDuration, d.flowchartStepDuration),
+        mindmapColorBy:           asEnum(nextOptions.mindmapColorBy, SUPPORTED_MINDMAP_COLOR_BY, d.mindmapColorBy),
+        packetBitOrder:           asEnum(nextOptions.packetBitOrder, SUPPORTED_BIT_ORDERS, d.packetBitOrder),
+        xyChartShowLegend:        asBoolean(nextOptions.xyChartShowLegend, d.xyChartShowLegend),
+        xyChartShowDataLabel:     asBoolean(nextOptions.xyChartShowDataLabel, d.xyChartShowDataLabel),
+    };
+}
+
+function isLayoutSupported(layout, diagramType) {
+    if (!diagramType) return true;
+    const blocked = LAYOUT_UNSUPPORTED_BY_DIAGRAM.get(layout);
+    return !(blocked && blocked.has(diagramType));
+}
+
+/**
+ * Resolve which `layout` value to hand to Mermaid for a given diagram type.
+ * Engines a diagram type rejects (e.g. cose-bilkent for flowcharts) are dropped
+ * so the diagram falls back to its own built-in default instead of failing.
+ */
+function resolveLayout(layout, diagramType) {
+    return isLayoutSupported(layout, diagramType) ? layout : undefined;
+}
+
+function buildConfig(theme, htmlLabels, diagramType) {
+    const layout = resolveLayout(currentOptions.layout, diagramType);
+    const config = {
         startOnLoad: false,
         theme,
         securityLevel: 'loose',
         fontFamily: 'ui-sans-serif, system-ui, -apple-system, sans-serif',
         htmlLabels,
-        layout: currentOptions.layout,
-        elk: useElk ? {
-            mergeEdges: currentOptions.elkMergeEdges,
+        darkMode: DARK_MERMAID_THEMES.has(theme),
+        elk: {
+            mergeEdges:            currentOptions.elkMergeEdges,
             nodePlacementStrategy: currentOptions.elkNodePlacementStrategy,
-        } : undefined,
+            orientFeedbackEdges:   currentOptions.elkOrientFeedbackEdges,
+            keepEntryNodeOnTop:    currentOptions.elkKeepEntryNodeOnTop,
+            straightenEdges:       currentOptions.elkStraightenEdges,
+            lineHops:              currentOptions.elkLineHops,
+        },
         flowchart: {
-            defaultRenderer: useElk ? 'elk' : (useDagre ? 'dagre-wrapper' : undefined),
-            inheritDir: currentOptions.inheritDir,
-            nodeSpacing: 50,
-            rankSpacing: 50,
+            inheritDir:    currentOptions.inheritDir,
+            nodeSpacing:   50,
+            rankSpacing:   50,
+            // step-by-step edge animation
+            stepNumbers:   currentOptions.flowchartStepNumbers,
+            stepDuration:  currentOptions.flowchartStepDuration,
+        },
+        mindmap: {
+            // depth-based mindmap coloring
+            colorBy: currentOptions.mindmapColorBy,
+        },
+        packet: {
+            // highest-bit-first rows
+            bitOrder: currentOptions.packetBitOrder,
+        },
+        xyChart: {
+            // series legend, plus per-point data labels
+            showLegend:    currentOptions.xyChartShowLegend,
+            showDataLabel: currentOptions.xyChartShowDataLabel,
         },
     };
+
+    if (layout) config.layout = layout;
+    // 'auto' lets each diagram type keep its own built-in default look (neo for most).
+    if (currentOptions.look !== 'auto') config.look = currentOptions.look;
+
+    return config;
 }
 
-function initializeMermaid(theme = 'default', htmlLabels = true) {
-    mermaid.initialize(buildConfig(theme, htmlLabels));
+function isValidMermaidTheme(theme) {
+    return MERMAID_THEMES.includes(theme);
+}
+
+/**
+ * Engine Mermaid itself uses when the configured one is rejected by a diagram
+ * type. Only combinations listed in LAYOUT_UNSUPPORTED_BY_DIAGRAM get here.
+ */
+const DIAGRAM_DEFAULT_LAYOUT = new Map([
+    ...['flowchart', 'graph', 'classDiagram', 'classDiagram-v2', 'stateDiagram',
+        'stateDiagram-v2', 'erDiagram', 'requirementDiagram', 'usecase',
+        'usecase-beta', 'agentflow', 'agentflow-beta', 'swimlane', 'swimlane-beta',
+    ].map(type => [type, 'elk']),
+    ['mindmap', 'cose-bilkent'],
+]);
+
+/** Effective layout for a diagram type, honouring per-diagram fallbacks. */
+function getEffectiveLayout(diagramType) {
+    const resolved = resolveLayout(currentOptions.layout, diagramType);
+    if (resolved) return resolved;
+    return DIAGRAM_DEFAULT_LAYOUT.get(diagramType) || 'the diagram’s built-in renderer';
+}
+
+function initializeMermaid(theme = 'default', htmlLabels = true, diagramType = undefined) {
+    mermaid.initialize(buildConfig(theme, htmlLabels, diagramType));
 }
 
 function getMermaidRenderHost() {
@@ -127,6 +277,12 @@ function getDefaultMermaidLayoutOptions() {
                 setMermaidLayoutOptions,
                 getMermaidLayoutOptions,
                 getDefaultMermaidLayoutOptions,
+                normalizeLayoutOptions,
+                isValidMermaidTheme,
+                isLayoutSupported,
+                getEffectiveLayout,
+                MERMAID_THEMES,
+                MERMAID_VERSION,
                 mermaid,
             };
         })();
@@ -137,8 +293,10 @@ function getDefaultMermaidLayoutOptions() {
  */
 
 const TEMPLATES = [
+    // ── Core diagrams ───────────────────────────────────────────────────────
     {
         id: 'flowchart',
+        group: 'Core diagrams',
         label: 'Flowchart',
         source: `flowchart LR
     A([Start]) --> B{Decision?}
@@ -149,6 +307,7 @@ const TEMPLATES = [
     },
     {
         id: 'sequence',
+        group: 'Core diagrams',
         label: 'Sequence Diagram',
         source: `sequenceDiagram
     participant A as Alice
@@ -162,6 +321,7 @@ const TEMPLATES = [
     },
     {
         id: 'class',
+        group: 'Core diagrams',
         label: 'Class Diagram',
         source: `classDiagram
     class Animal {
@@ -181,6 +341,7 @@ const TEMPLATES = [
     },
     {
         id: 'state',
+        group: 'Core diagrams',
         label: 'State Diagram',
         source: `stateDiagram-v2
     [*] --> Idle
@@ -197,6 +358,7 @@ const TEMPLATES = [
     },
     {
         id: 'er',
+        group: 'Core diagrams',
         label: 'ER Diagram',
         source: `erDiagram
     CUSTOMER ||--o{ ORDER : places
@@ -214,130 +376,20 @@ const TEMPLATES = [
     PRODUCT {
         string name
         float price
-    }`
-    },
-    {
-        id: 'gantt',
-        label: 'Gantt Chart',
-        source: `gantt
-    title Project Timeline
-    dateFormat YYYY-MM-DD
+    }
 
-    section Planning
-        Requirements   :a1, 2024-01-01, 14d
-        Design         :a2, after a1, 10d
+    subgraph fulfilment [Fulfilment]
+        SHIPMENT ||--|{ SHIPMENT-ITEM : contains
+        SHIPMENT {
+            date shipped
+        }
+    end
 
-    section Development
-        Backend        :b1, after a2, 21d
-        Frontend       :b2, after a2, 18d
-
-    section Testing
-        Integration    :c1, after b1, 7d
-        UAT            :after c1, 5d`
-    },
-    {
-        id: 'pie',
-        label: 'Pie Chart',
-        source: `pie title Browser Market Share
-    "Chrome"  : 65.0
-    "Safari"  : 19.4
-    "Firefox" : 4.1
-    "Edge"    : 4.0
-    "Other"   : 7.5`
-    },
-    {
-        id: 'mindmap',
-        label: 'Mind Map',
-        source: `mindmap
-  root((Project))
-    Planning
-      Requirements
-      Timeline
-    Development
-      Backend
-        API
-        Database
-      Frontend
-        UI
-        UX
-    Testing
-      Unit Tests
-      E2E Tests`
-    },
-    {
-        id: 'gitgraph',
-        label: 'Git Graph',
-        source: `gitGraph
-    commit id: "Init"
-    commit id: "Setup"
-    branch feature/login
-    checkout feature/login
-    commit id: "Add login"
-    commit id: "Add tests"
-    checkout main
-    merge feature/login id: "Merge login"
-    commit id: "Release v1.0"`
-    },
-    {
-        id: 'timeline',
-        label: 'Timeline',
-        source: `timeline
-    title History of the Web
-    1991 : World Wide Web invented
-    1993 : Mosaic browser released
-    1995 : JavaScript created
-    2004 : Gmail launches
-         : Facebook founded
-    2007 : iPhone announced
-    2009 : Node.js created`
-    },
-    {
-        id: 'quadrant',
-        label: 'Quadrant Chart',
-        source: `quadrantChart
-    title Reach and Engagement
-    x-axis "Low Reach" --> "High Reach"
-    y-axis "Low Engagement" --> "High Engagement"
-    quadrant-1 Grow
-    quadrant-2 Needs attention
-    quadrant-3 Re-evaluate
-    quadrant-4 May be improved
-    Campaign A: [0.3, 0.6]
-    Campaign B: [0.45, 0.23]
-    Campaign C: [0.57, 0.69]
-    Campaign D: [0.78, 0.34]`
-    },
-    {
-        id: 'xychart',
-        label: 'XY Chart',
-        source: `xychart-beta
-    title "Monthly Revenue"
-    x-axis [Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec]
-    y-axis "Revenue (USD)" 4000 --> 11000
-    bar  [5000, 6000, 7500, 8200, 9000, 9500, 9800, 10200, 9800, 10500, 11000, 10800]
-    line [5000, 6000, 7500, 8200, 9000, 9500, 9800, 10200, 9800, 10500, 11000, 10800]`
-    },
-    {
-        id: 'userjourney',
-        label: 'User Journey',
-        source: `journey
-    title Online Shopping Experience
-    section Browse
-      Visit homepage: 5: Customer
-      Search for product: 4: Customer
-      View product details: 4: Customer
-    section Purchase
-      Add to cart: 5: Customer
-      Enter shipping info: 3: Customer
-      Enter payment info: 2: Customer
-      Confirm order: 4: Customer
-    section Post-Purchase
-      Receive confirmation email: 5: Customer, System
-      Track shipment: 4: Customer
-      Receive package: 5: Customer`
+    ORDER ||--|| SHIPMENT : ships`
     },
     {
         id: 'c4',
+        group: 'Core diagrams',
         label: 'C4 Diagram',
         source: `C4Context
     title System Context Diagram for Online Shop
@@ -357,6 +409,623 @@ const TEMPLATES = [
     Rel(emailSystem, customer, "Delivers notifications to")
 
     UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")`
+    },
+    {
+        id: 'usecase',
+        group: 'Core diagrams',
+        label: 'UML Use Case',
+        source: `usecase-beta
+direction LR
+
+actor Customer
+actor Support
+
+systemBoundary Storefront
+    Browse("Browse catalogue")
+    Checkout("Checkout")
+end
+
+systemBoundary Fulfilment
+    Track("Track delivery")
+end
+
+Customer --> Browse
+Customer --> Checkout
+Customer --> Track
+Support --> Track
+
+Checkout ..> : include Browse`
+    },
+    {
+        id: 'swimlane',
+        group: 'Core diagrams',
+        label: 'Swimlanes',
+        source: `swimlane-beta LR
+    subgraph Customer
+        request[Request support]
+        receive[Receive update]
+    end
+
+    subgraph Support
+        triage[Triage request]
+        answer[Send answer]
+    end
+
+    subgraph Engineering
+        investigate[Investigate issue]
+        fix[Prepare fix]
+    end
+
+    request --> triage
+    triage -->|Known issue| answer
+    triage -->|Needs code change| investigate
+    investigate --> fix --> answer
+    answer --> receive`
+    },
+    {
+        id: 'agentflow',
+        group: 'Core diagrams',
+        label: 'Agentflow',
+        source: `agentflow-beta TB
+    brief["Release brief"]@{ shape: input }
+
+    flow writer["Drafting Agent"]
+        draft["Draft the notes"]@{ shape: task }
+        lookup["changelog_search"]@{ shape: tool }
+        guide["Tone of voice"]@{ shape: refdoc }
+        draft --> lookup
+        draft -.- guide
+    end
+
+    flow reviewer["Review Agent"]
+        check["Check the claims"]@{ shape: task }
+        ok["Accurate?"]@{ shape: decision }
+        check --> ok
+    end
+
+    publish["Publish"]@{ shape: action }
+
+    brief --> writer
+    writer --> reviewer
+    ok --> publish`
+    },
+    {
+        id: 'requirement',
+        group: 'Core diagrams',
+        label: 'Requirement Diagram',
+        source: `requirementDiagram
+
+    requirement checkout_req {
+        id: 1
+        text: Orders must be payable online.
+        risk: high
+        verifymethod: test
+    }
+
+    functionalRequirement payment_req {
+        id: 1.1
+        text: Card payments must be authorised.
+        risk: high
+        verifymethod: test
+    }
+
+    element checkout_service {
+        type: service
+    }
+
+    checkout_req - contains -> payment_req
+    checkout_service - satisfies -> payment_req`
+    },
+
+    // ── Flowchart extras ────────────────────────────────────────────────────
+    {
+        id: 'flowchart-shapes',
+        group: 'Flowchart extras',
+        label: 'New shapes (person, browser…)',
+        source: `flowchart LR
+    engineer["Support engineer"]@{ shape: person }
+    app["Web app"]@{ shape: browser }
+    shell["Shell"]@{ shape: console }
+    repo["Source repo"]@{ shape: folder }
+    blobs["Object store"]@{ shape: bucket }
+
+    engineer --> app
+    app --> shell
+    app --> repo
+    repo --> blobs`
+    },
+    {
+        id: 'flowchart-collapse',
+        group: 'Flowchart extras',
+        label: 'Collapsible subgraph',
+        source: `flowchart TD
+    Start([Start]) --> ingest
+
+    subgraph ingest [Ingestion pipeline]
+        parse[Parse] --> enrich[Enrich]
+        enrich --> index[Index]
+    end
+
+    ingest --> store[(Warehouse)]
+    ingest@{ view: collapsed }`
+    },
+    {
+        id: 'flowchart-steps',
+        group: 'Flowchart extras',
+        label: 'Step-by-step edge animation',
+        source: `flowchart LR
+    Client e1@--> API
+    API e2@--> Cache
+    Cache e3@-->|miss| DB
+    DB e4@--> API
+    API e5@--> Client
+
+    e1@{ step: 1 }
+    e2@{ step: 2 }
+    e3@{ step: 3 }
+    e4@{ step: 4 }
+    e5@{ step: 5 }`
+    },
+    {
+        id: 'flowchart-bpmn',
+        group: 'Flowchart extras',
+        label: 'BPMN shapes & markers',
+        source: `flowchart LR
+    start@{ shape: bpmn-start } --> order["Place order"]@{ shape: bpmn-activity }
+    order --> gw{"In stock?"}@{ shape: bpmn-gateway, type: exclusive }
+    gw -->|yes| ship["Ship it"]@{ shape: bpmn-activity, marker: loop }
+    gw -->|no| backorder["Back-order"]@{ shape: bpmn-activity, marker: parallel }
+    ship --> done@{ shape: bpmn-end }
+    backorder --> done
+    catalog["Catalogue"]@{ shape: bpmn-data } -.- order
+    crm["CRM store"]@{ shape: bpmn-data-store } -.- ship`
+    },
+
+    // ── Charts & data ───────────────────────────────────────────────────────
+    {
+        id: 'gantt',
+        group: 'Charts & data',
+        label: 'Gantt Chart',
+        source: `gantt
+    title Project Timeline
+    dateFormat YYYY-MM-DD
+
+    section Planning
+        Requirements   :a1, 2024-01-01, 14d
+        Design         :a2, after a1, 10d
+
+    section Development
+        Backend        :b1, after a2, 21d
+        Frontend       :b2, after a2, 18d
+
+    section Testing
+        Integration    :c1, after b1, 7d
+        UAT            :after c1, 5d`
+    },
+    {
+        id: 'pie',
+        group: 'Charts & data',
+        label: 'Pie Chart',
+        source: `pie title Browser Market Share
+    "Chrome"  : 65.0
+    "Safari"  : 19.4
+    "Firefox" : 4.1
+    "Edge"    : 4.0
+    "Other"   : 7.5`
+    },
+    {
+        id: 'quadrant',
+        group: 'Charts & data',
+        label: 'Quadrant Chart',
+        source: `quadrantChart
+    title Reach and Engagement
+    x-axis "Low Reach" --> "High Reach"
+    y-axis "Low Engagement" --> "High Engagement"
+    quadrant-1 Grow
+    quadrant-2 Needs attention
+    quadrant-3 Re-evaluate
+    quadrant-4 May be improved
+    Campaign A: [0.3, 0.6]
+    Campaign B: [0.45, 0.23]
+    Campaign C: [0.57, 0.69]
+    Campaign D: [0.78, 0.34]`
+    },
+    {
+        id: 'xychart',
+        group: 'Charts & data',
+        label: 'XY Chart (named series → legend)',
+        source: `xychart-beta
+    title "Monthly Revenue vs Target"
+    x-axis [Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec]
+    y-axis "Revenue (USD)" 4000 --> 12000
+    bar  "Revenue" [5000, 6000, 7500, 8200, 9000, 9500, 9800, 10200, 9800, 10500, 11000, 10800]
+    line "Target"   [5500, 6200, 7000, 8000, 9000, 9500, 10000, 10500, 10500, 11000, 11500, 11500]`
+    },
+    {
+        id: 'xychart-points',
+        group: 'Charts & data',
+        label: 'XY Chart point labels',
+        source: `xychart-beta
+    title "Smallest AI models scoring above 60% on MMLU"
+    x-axis "Date" ["Apr 2022", "Feb 2023", "Jul 2023", "Sep 2023", "Apr 2024"]
+    y-axis "Parameters (B)" 0 --> 600
+    line [540 "PaLM", 65 "LLaMA-65B", 34 "Llama 2 34B", 7 "Mistral 7B", 3.8 "Phi-3-mini"]`
+    },
+    {
+        id: 'radar',
+        group: 'Charts & data',
+        label: 'Radar Chart',
+        source: `radar-beta
+    title Team skills
+    axis analysis["Analysis"], build["Build"], test["Test"], deploy["Deploy"], monitor["Monitor"]
+    curve platform["Platform team"]{4, 5, 3, 4, 2}
+    curve product["Product team"]{3, 3, 4, 2, 4}
+    max 5
+    min 0
+    graticule polygon
+    ticks 5`
+    },
+    {
+        id: 'sankey',
+        group: 'Charts & data',
+        label: 'Sankey Diagram',
+        source: `sankey-beta
+
+Traffic,Organic search,420
+Traffic,Referral,180
+Traffic,Paid ads,150
+Organic search,Sign-ups,120
+Referral,Sign-ups,90
+Paid ads,Sign-ups,40
+Sign-ups,Trial,210
+Sign-ups,Bounce,40
+Trial,Paid plan,60
+Trial,Churn,150`
+    },
+    {
+        id: 'packet',
+        group: 'Charts & data',
+        label: 'Packet Diagram',
+        source: `packet-beta
+0-15: "Source port"
+16-31: "Destination port"
+32-63: "Sequence number"
+64-95: "Acknowledgement number"
+96-99: "Data offset"
+100-105: "Reserved bits"
+106-111: "Flags"
+112-127: "Window size"`
+    },
+    {
+        id: 'timeline',
+        group: 'Charts & data',
+        label: 'Timeline',
+        source: `timeline
+    title History of the Web
+    1991 : World Wide Web invented
+    1993 : Mosaic browser released
+    1995 : JavaScript created
+    2004 : Gmail launches
+         : Facebook founded
+    2007 : iPhone announced
+    2009 : Node.js created`
+    },
+    {
+        id: 'userjourney',
+        group: 'Charts & data',
+        label: 'User Journey',
+        source: `journey
+    title Online Shopping Experience
+    section Browse
+      Visit homepage: 5: Customer
+      Search for product: 4: Customer
+      View product details: 4: Customer
+    section Purchase
+      Add to cart: 5: Customer
+      Enter shipping info: 3: Customer
+      Enter payment info: 2: Customer
+      Confirm order: 4: Customer
+    section Post-Purchase
+      Receive confirmation email: 5: Customer, System
+      Track shipment: 4: Customer
+      Receive package: 5: Customer`
+    },
+
+    // ── Structure & planning ────────────────────────────────────────────────
+    {
+        id: 'mindmap',
+        group: 'Structure & planning',
+        label: 'Mind Map',
+        source: `mindmap
+  root((Project))
+    Planning
+      Requirements
+      Timeline
+    Development
+      Backend
+        API
+        Database
+      Frontend
+        UI
+        UX
+    Testing
+      Unit Tests
+      E2E Tests`
+    },
+    {
+        id: 'treeview',
+        group: 'Structure & planning',
+        label: 'Tree View',
+        source: `treeView-beta
+├── src/
+│   ├── editor.ts ## CodeMirror setup
+│   ├── preview/
+│   │   ├── render.ts
+│   │   └── zoom.ts
+│   └── export.ts ## PNG / SVG writers
+├── css/
+│   └── styles.css ## design tokens
+├── package.json ## no build step!
+└── README.md`
+    },
+    {
+        id: 'treemap',
+        group: 'Structure & planning',
+        label: 'Treemap',
+        source: `treemap-beta
+"Editor features"
+    "Editing"
+        "Tabs": 34
+        "Templates": 36
+        "Shortcuts": 12
+    "Preview"
+        "Zoom & pan": 20
+        "Themes": 11
+        "Layouts": 4
+    "Export"
+        "PNG": 9
+        "SVG": 4`
+    },
+    {
+        id: 'kanban',
+        group: 'Structure & planning',
+        label: 'Kanban Board',
+        source: `kanban
+  todo[Todo]
+    task1[Write ELK docs]@{ priority: 'Low' }
+    task2[Ship step animation]@{ ticket: MC-2037, assigned: 'knsv', priority: 'High' }
+  doing[In progress]
+    task3[Review use-case renderer]@{ assigned: 'Andrew WILLIAMS', priority: 'High' }
+  done[Done]
+    task4[Bundle elkjs]@{ priority: 'Medium' }`
+    },
+    {
+        id: 'architecture',
+        group: 'Structure & planning',
+        label: 'Architecture Diagram',
+        source: `architecture-beta
+    group api(cloud)[Editor]
+    group data(database)[Persistence]
+
+    service editor(browser)[Editor] in api
+    service preview(browser)[Preview] in api
+    service store(localstorage)[Local storage] in data
+    service files(filesystem)[Files] in data
+
+    editor:L -- R:preview
+    store:T -- B:editor
+    files:T -- B:store`
+    },
+    {
+        id: 'block',
+        group: 'Structure & planning',
+        label: 'Block Diagram',
+        source: `block-beta
+    columns 3
+        editor["Editor"]
+        space
+        preview["Preview"]
+        editor --> preview
+
+        block:build["Build"]
+            parse["Parse"]
+            layout["Layout"]
+            render["Render"]
+            parse --> layout --> render
+        end
+
+        build --> preview
+        db[("Local storage")]
+        build --> db`
+    },
+
+    // ── Analysis & strategy ─────────────────────────────────────────────────
+    {
+        id: 'venn',
+        group: 'Analysis & strategy',
+        label: 'Venn Diagram',
+        source: `venn-beta
+    title What makes a good feature
+    set Desirable
+    set Feasible
+    set Viable
+    union Desirable,Feasible["Buildable"]
+    union Feasible,Viable["Sustainable"]
+    union Desirable,Viable["Marketable"]
+    union Desirable,Feasible,Viable["Ship it"]`
+    },
+    {
+        id: 'ishikawa',
+        group: 'Analysis & strategy',
+        label: 'Ishikawa / Fishbone',
+        source: `ishikawa-beta
+    Slow page load
+    Frontend
+        Large bundle
+        Blocking render
+        Unminified assets
+    Network
+        No CDN
+        Slow API response
+    Backend
+        N+1 queries
+        Cold cache
+    Build
+        Source maps shipped`
+    },
+    {
+        id: 'wardley',
+        group: 'Analysis & strategy',
+        label: 'Wardley Map',
+        source: `wardley-beta
+title Online shop value chain
+
+anchor Customer [0.95, 0.63]
+component Shop [0.85, 0.61] (build)
+component Checkout [0.72, 0.71] (build)
+component Payments [0.66, 0.55] (buy)
+component Identity [0.58, 0.42] (outsource)
+component Compute [0.18, 0.72] (market)
+
+Customer -> Shop
+Shop -> Checkout
+Checkout -> Payments
+Checkout -> Identity
+Payments -> Compute
+
+evolve Compute 0.95
+evolve Identity 0.80
+
+note "Compute and identity are utilities" [0.34, 0.34]`
+    },
+    {
+        id: 'cynefin',
+        group: 'Analysis & strategy',
+        label: 'Cynefin Framework',
+        source: `cynefin-beta
+    title Incident response
+
+    complex
+        "Investigate root cause"
+        "Run chaos experiment"
+
+    complicated
+        "Analyse performance data"
+        "Expert review needed"
+
+    clear
+        "Restart the service"
+        "Apply known fix"
+
+    chaotic
+        "Page on-call immediately"
+
+    confusion
+        "Unknown failure mode"
+
+    complex --> complicated : "Pattern identified"
+    complicated --> clear : "Best practice codified"
+    clear --> chaotic : "Complacency"
+    chaotic --> complex : "Stabilised"`
+    },
+    {
+        id: 'eventmodeling',
+        group: 'Analysis & strategy',
+        label: 'Event Modeling',
+        source: `eventmodeling
+
+tf 01 ui CartUI
+tf 02 cmd AddItem [[AddItem01]]
+tf 03 evt ItemAdded [[ItemAdded]]
+tf 04 cmd Checkout [[Checkout01]]
+tf 05 evt OrderPlaced [[OrderPlaced]]
+
+data AddItem01 {
+  description: 'espresso machine'
+  price: 249.0
+}
+
+data ItemAdded {
+  description: string
+  price: number
+}
+
+data Checkout01 {
+  description: 'card ···· 4242'
+}
+
+data OrderPlaced {
+  description: string
+  total: number
+}`
+    },
+
+    // ── Railroad grammars ───────────────────────────────────────────────────
+    {
+        id: 'railroad-ebnf',
+        group: 'Railroad grammars',
+        label: 'Railroad — EBNF',
+        source: `railroad-ebnf-beta
+title "Arithmetic expression grammar"
+
+expression = term ( ( "+" | "-" ) term )* ;
+term = factor ( ( "*" | "/" ) factor )* ;
+factor = number | "(" expression ")" ;
+number = digit+ ;
+digit = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" ;`
+    },
+    {
+        id: 'railroad-abnf',
+        group: 'Railroad grammars',
+        label: 'Railroad — ABNF',
+        source: `railroad-abnf-beta
+title "Email address"
+
+address = local-part "@" domain ;
+local-part = 1*( ALPHA / DIGIT / "." / "-" ) ;
+domain = label *( "." label ) ;
+label = 1*( ALPHA / DIGIT / "-" ) ;`
+    },
+    {
+        id: 'railroad-peg',
+        group: 'Railroad grammars',
+        label: 'Railroad — PEG',
+        source: `railroad-peg-beta
+title "Calculator grammar"
+
+Expression <- Term (("+" / "-") Term)* ;
+Term <- Factor (("*" / "/") Factor)* ;
+Factor <- Number / "(" Expression ")" ;
+Number <- Digit+ ;
+Digit <- "0" / "1" / "2" / "3" / "4" / "5" / "6" / "7" / "8" / "9" ;`
+    },
+    {
+        id: 'railroad-ir',
+        group: 'Railroad grammars',
+        label: 'Railroad — IR',
+        source: `railroad-beta
+title "Optional sign, then digits"
+
+sign = choice(terminal("+"), terminal("-")) ;
+number = sequence(optional(nonterminal("sign")), oneOrMore(nonterminal("digit"))) ;
+digit = choice(terminal("0"), terminal("1"), terminal("2"), terminal("3"), terminal("4")) ;`
+    },
+
+    // ── Version control ─────────────────────────────────────────────────────
+    {
+        id: 'gitgraph',
+        group: 'Version control',
+        label: 'Git Graph',
+        source: `gitGraph
+    commit id: "Init"
+    commit id: "Setup"
+    branch feature/login
+    checkout feature/login
+    commit id: "Add login"
+    commit id: "Add tests"
+    checkout main
+    merge feature/login id: "Merge login"
+    commit id: "Release v1.0"`
     },
 ];
 
@@ -562,7 +1231,7 @@ function svgToDataURL(svgString) {
 async function renderExportSVG(source, theme = 'default') {
     const id = `mmd-export-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-    initializeMermaid(theme, false);
+    initializeMermaid(theme, false, parseDiagramType(source));
 
     try {
         const { svg } = await mermaid.render(id, source, getMermaidRenderHost());
@@ -772,11 +1441,12 @@ function setTransformChangeListener(listener) {
 
 // ── Initialisation ─────────────────────────────────────────────────────────
 /**
- * @param {HTMLElement} pArea    – the preview wrapper (overflow:hidden)
- * @param {HTMLElement} dWrapper – the diagram inner div
- * @param {HTMLElement} zDisplay – element showing the zoom percentage
+ * @param {HTMLElement} pArea        – the preview wrapper (overflow:hidden)
+ * @param {HTMLElement} dWrapper     – the diagram inner div
+ * @param {HTMLElement} zDisplay     – element showing the zoom percentage
+ * @param {string}    [initialTheme] – persisted Mermaid theme to adopt
  */
-function initPreview(pArea, dWrapper, zDisplay) {
+function initPreview(pArea, dWrapper, zDisplay, initialTheme) {
     previewArea    = pArea;
     diagramWrapper = dWrapper;
     zoomDisplay    = zDisplay;
@@ -784,7 +1454,9 @@ function initPreview(pArea, dWrapper, zDisplay) {
     diagramWrapper.style.transformOrigin = '0 0';
     diagramWrapper.style.position        = 'absolute';
 
-    mermaidInit(_mermaidTheme);
+    if (initialTheme) _mermaidTheme = initialTheme;
+
+    mermaidInit(_mermaidTheme, '');
 
     // Mouse wheel zoom
     previewArea.addEventListener('wheel', onWheel, { passive: false });
@@ -800,8 +1472,12 @@ function initPreview(pArea, dWrapper, zDisplay) {
     previewArea.addEventListener('touchend',   () => { _lastPinchDist = null; });
 }
 
-function mermaidInit(theme) {
-    initializeMermaid(theme, true);
+/**
+ * Re-initialise Mermaid for the current theme plus the diagram type being
+ * rendered, so per-diagram layout fallbacks and theme defaults apply.
+ */
+function mermaidInit(theme, source) {
+    initializeMermaid(theme, true, parseDiagramType(source));
 }
 
 // ── Rendering ──────────────────────────────────────────────────────────────
@@ -848,7 +1524,7 @@ async function renderNow(source, options = {}) {
     const id     = `mmd-${serial}`;
 
     try {
-        mermaidInit(_mermaidTheme); // apply current theme before each render
+        mermaidInit(_mermaidTheme, source); // apply current theme before each render
         const { svg, bindFunctions } = await mermaid.render(id, source, getMermaidRenderHost());
 
         // Clean up any DOM artefacts Mermaid may have left behind
@@ -1125,10 +1801,21 @@ function onTouchMove(e) {
         'journey', 'mindmap', 'timeline', 'quadrantChart',
         'requirementDiagram', 'C4Context', 'C4Container',
         'C4Component', 'C4Dynamic', 'C4Deployment', 'block',
+        'xychart', 'packet', 'architecture', 'radar', 'treemap',
+        'kanban', 'venn', 'ishikawa', 'sankey', 'wardley',
+        'eventmodeling', 'cynefin', 'swimlane', 'usecase',
+        'agentflow', 'treeView', 'railroad',
+        // Explicit *-beta names (also matched by DIAGRAM_RE)
+        'stateDiagram-v2', 'xychart-beta', 'block-beta', 'packet-beta',
+        'architecture-beta', 'radar-beta', 'treemap-beta', 'venn-beta',
+        'ishikawa-beta', 'wardley-beta', 'cynefin-beta', 'swimlane-beta',
+        'usecase-beta', 'agentflow-beta', 'treeView-beta', 'railroad-beta',
+        'railroad-ebnf-beta', 'railroad-abnf-beta', 'railroad-peg-beta',
     ]);
 
-    // Matches diagram type names that include a hyphen (e.g. stateDiagram-v2)
-    const DIAGRAM_RE = /^(stateDiagram-v2|xychart-beta|block-beta)\b/i;
+    // Matches diagram type names that include a hyphen (e.g. stateDiagram-v2,
+    // treeView-beta, railroad-peg-beta)
+    const DIAGRAM_RE = /^(stateDiagram-v2|[a-zA-Z][a-zA-Z]*-beta)\b/;
 
     const KEYWORDS = new Set([
         'subgraph', 'end', 'note', 'loop', 'alt', 'else', 'opt', 'par',
@@ -1138,6 +1825,37 @@ function onTouchMove(e) {
         'click', 'href', 'link', 'namespace', 'over', 'as',
         'dateFormat', 'axisFormat', 'tickInterval', 'excludes', 'includes',
         'accTitle', 'accDescr', 'left', 'right', 'of',
+        // ── Extended-syntax keywords ────────────────────────────────────
+        // use case / swimlane / agentflow
+        'systemBoundary', 'system', 'boundary', 'flow', 'include', 'extend',
+        'generalizes', 'contract',
+        // wardley / cynefin / event modeling
+        'anchor', 'component', 'evolve', 'dependency', 'capability',
+        'support', 'infrastructure', 'goal', 'platform', 'technique',
+        'repeat', 'review', 'data', 'channels', 'channel', 'event', 'source',
+        'dataset', 'past', 'future',
+        // venn / treemap / kanban / radar / sankey
+        'union', 'set', 'graticule', 'ticks', 'curve', 'axis', 'x-axis', 'y-axis',
+        'bar', 'line', 'max', 'min', 'legend', 'priority', 'ticket', 'assigned',
+        // flowchart inline directives (@{ … }) and built-in shapes
+        'shape', 'marker', 'type', 'view', 'collapsed', 'expanded', 'step',
+        'stepNumbers', 'stepDuration', 'person', 'folder', 'bucket', 'console',
+        'browser',
+        // packet / mindmap / xyChart options
+        'bitOrder', 'ascending', 'descending', 'colorBy', 'depth',
+        'showLegend', 'showDataLabel',
+        // requirement diagram
+        'requirement', 'functionalRequirement', 'interfaceRequirement',
+        'performanceRequirement', 'physicalRequirement', 'designRequirement',
+        'acceptanceRequirement', 'wideRequirement', 'element', 'contains',
+        'satisfy', 'verify', 'derive', 'trace', 'copy', 'cite', 'realize',
+        'validate', 'risk', 'verifymethod',
+        // state / class diagram v2
+        'state', 'partition', 'hide', 'empty', 'choice', 'fork', 'join',
+        'history', 'retry', 'timeout', 'entry', 'exit', 'stop', 'kill', 'detach',
+        'interface', 'enum', 'abstract', 'package', 'annotation', 'struct',
+        // sequence diagram
+        'box', 'create', 'destroy', 'links', 'critical', 'break', 'return',
     ]);
 
     CM.defineMode('mermaid', function () {
@@ -1221,7 +1939,7 @@ function onTouchMove(e) {
                     return 'operator';
                 }
 
-                // ── Hex colour ───────────────────────────────────────────
+                // ── Hex color ───────────────────────────────────────────
                 if (stream.match(/^#[0-9a-fA-F]{3,8}\b/)) {
                     state.isLineStart = false;
                     return 'atom';
@@ -1263,15 +1981,27 @@ function onTouchMove(e) {
 
 // ── Auto-complete hint list ────────────────────────────────────────────────
 const HINT_WORDS = [
+    // Diagram types
     'flowchart', 'graph', 'sequenceDiagram', 'classDiagram', 'stateDiagram-v2',
     'gantt', 'pie', 'gitGraph', 'erDiagram', 'journey', 'mindmap', 'timeline',
     'quadrantChart', 'xychart-beta', 'block-beta', 'requirementDiagram',
+    'packet-beta', 'architecture-beta', 'radar-beta', 'treemap-beta', 'kanban',
+    'venn-beta', 'ishikawa-beta', 'sankey-beta', 'wardley-beta', 'eventmodeling',
+    'cynefin-beta', 'swimlane-beta', 'usecase-beta', 'agentflow-beta',
+    'treeView-beta', 'railroad-beta', 'railroad-ebnf-beta', 'railroad-abnf-beta',
+    'railroad-peg-beta',
+    // Keywords
     'subgraph', 'end', 'note', 'loop', 'alt', 'else', 'opt', 'par', 'and', 'rect',
     'classDef', 'class', 'linkStyle', 'style', 'direction', 'participant', 'actor',
     'activate', 'deactivate', 'autonumber', 'title', 'section',
     'LR', 'RL', 'TB', 'BT', 'TD',
     'dateFormat', 'axisFormat', 'tickInterval', 'excludes', 'includes',
     'accTitle', 'accDescr', 'click', 'href', 'link', 'namespace',
+    // New-syntax helpers
+    'systemBoundary', 'flow', 'shape', 'marker', 'view', 'collapsed', 'step',
+    'evolve', 'anchor', 'component', 'system', 'data', 'union', 'set',
+    'bitOrder', 'colorBy', 'showLegend', 'showDataLabel', 'stepNumbers',
+    'graticule', 'ticks', 'curve', 'axis', 'x-axis', 'y-axis', 'bar', 'line',
 ];
 
 function mermaidHint(cm) {
@@ -1449,6 +2179,8 @@ function detectDiagramType() {
             } = MermaidEditorEditor;
             const {
                 setMermaidLayoutOptions, getMermaidLayoutOptions, getDefaultMermaidLayoutOptions,
+                normalizeLayoutOptions, isValidMermaidTheme, isLayoutSupported,
+                getEffectiveLayout, MERMAID_VERSION,
             } = MermaidEditorMermaidApi;
 
 /**
@@ -1467,6 +2199,8 @@ const diagramWrap   = $('diagram-wrapper');
 const zoomDisplay   = $('zoom-display');
 const statusLine       = $('status-line');
 const statusType       = $('status-type');
+const statusLibVersion = $('status-lib-version');
+let   layoutControlsReady = false;   // guards option sync until the controls are wired
 const statusError      = $('status-error');
 const statusErrorPopup = $('status-error-popup');
 const statusErrorText  = $('status-error-popup-text');
@@ -1482,23 +2216,37 @@ const LS_THEME_APP   = 'mermaid-editor-theme-app';   // 'light' | 'dark'
 const LS_THEME_MMD   = 'mermaid-editor-theme-mmd';   // mermaid theme name
 const LS_PANE_WIDTH  = 'mermaid-editor-pane-width';
 const LS_LAYOUT_OPTS = 'mermaid-editor-layout-options';
+// Bump when the stored shape changes; entries from another schema version are
+// replaced by the current defaults instead of being half-migrated.
+const LS_LAYOUT_OPTS_SCHEMA = 2;
 const LS_AUTO_RENDER = 'mermaid-editor-auto-render';
 
 // ── Bootstrap ──────────────────────────────────────────────────────────────
 let isDark        = localStorage.getItem(LS_THEME_APP) === 'dark';
-let mermaidTheme  = localStorage.getItem(LS_THEME_MMD) || 'default';
+const storedTheme = localStorage.getItem(LS_THEME_MMD);
+let mermaidTheme  = isValidMermaidTheme(storedTheme) ? storedTheme : 'default';
 let layoutOptions = loadLayoutOptions();
 let autoRender    = localStorage.getItem(LS_AUTO_RENDER) !== 'false';
 let openTabs      = loadTabs();
 let activeTabId   = openTabs[0]?.id ?? null;
 let isSwitchingTabs = false;
 let renamingTabId = null;
+// Source last installed by the app itself (template insert, tab create/switch,
+// import). Used to tell "untouched" diagrams apart from hand-edited ones, so
+// replacement prompts only fire when there is actually something to lose.
+let pristineSource = '';
 
 // Apply active tab's per-tab settings, which take priority over global defaults
 const _initActiveTab = openTabs.find(t => t.id === activeTabId) ?? openTabs[0];
 if (_initActiveTab?.mermaidTheme) mermaidTheme = _initActiveTab.mermaidTheme;
 if (_initActiveTab?.layoutOptions) layoutOptions = { ..._initActiveTab.layoutOptions };
 setMermaidLayoutOptions(layoutOptions);
+
+// Show which Mermaid build is powering the preview
+if (statusLibVersion) {
+    statusLibVersion.textContent = `mermaid ${MERMAID_VERSION}`;
+    statusLibVersion.title       = `Mermaid ${MERMAID_VERSION} is loaded from the CDN and used to render diagrams`;
+}
 
 // Apply persisted dark mode before first paint
 if (isDark) document.body.classList.add('dark');
@@ -1516,10 +2264,11 @@ const initialSource = initialTab?.source || DEFAULT_DIAGRAM;
 
 // Init CodeMirror editor
 const cmEditor = initEditor(editorTA, initialSource);
+pristineSource = initialSource;
 setEditorTheme(isDark);
 
 // Init preview pane
-initPreview(previewArea, diagramWrap, zoomDisplay);
+initPreview(previewArea, diagramWrap, zoomDisplay, mermaidTheme);
 setTransformChangeListener(transform => {
     updateActiveTabPreview(transform);
     if (saveDropdown?.classList.contains('show')) updateSaveDropdownLabel();
@@ -1579,6 +2328,7 @@ function updateStatusBar() {
         persistTabs();
         renderTabs();
     }
+    if (layoutControlsReady) updateLayoutControlsState();
 }
 
 let _currentErrorLine = null;
@@ -1666,43 +2416,67 @@ mmdThemeSelect.addEventListener('change', async () => {
 });
 
 const layoutSelect      = $('layout-select');
+const lookSelect        = $('look-select');
 const inheritDirInput   = $('layout-inherit-dir');
 const elkPlacementInput = $('elk-node-placement');
 const elkMergeEdges     = $('elk-merge-edges');
-const layoutAdvanced    = $('layout-advanced');
-const layoutAdvancedPanel = layoutAdvanced.querySelector('.layout-advanced-panel');
-const layoutAdvancedSummary = layoutAdvanced.querySelector('summary');
+const elkFeedbackInput  = $('elk-orient-feedback-edges');
+const elkEntryInput     = $('elk-keep-entry-node-on-top');
+const elkStraightenInput = $('elk-straighten-edges');
+const elkLineHopsInput  = $('elk-line-hops');
+const stepNumbersInput  = $('opt-step-numbers');
+const stepDurationInput = $('opt-step-duration');
+const stepDurationLabel = $('opt-step-duration-value');
+const mindmapColorInput = $('opt-mindmap-color-by');
+const packetBitInput    = $('opt-packet-bit-order');
+const xyLegendInput     = $('opt-xy-legend');
+const xyDataLabelInput  = $('opt-xy-data-label');
+
+// Popovers: "Layout options" and "Diagram options" share one positioning routine.
+const optionPopovers = [$('layout-advanced'), $('diagram-advanced')].filter(Boolean);
 
 syncLayoutControls();
 updateLayoutControlsState();
+layoutControlsReady = true;
 
-layoutSelect.addEventListener('change', applyLayoutSettingsFromUI);
-inheritDirInput.addEventListener('change', applyLayoutSettingsFromUI);
-elkPlacementInput.addEventListener('change', applyLayoutSettingsFromUI);
-elkMergeEdges.addEventListener('change', applyLayoutSettingsFromUI);
+[layoutSelect, lookSelect, inheritDirInput, elkPlacementInput, elkMergeEdges,
+ elkFeedbackInput, elkEntryInput, elkStraightenInput, elkLineHopsInput,
+ stepNumbersInput, stepDurationInput, mindmapColorInput, packetBitInput,
+ xyLegendInput, xyDataLabelInput].forEach(el => {
+    if (el) el.addEventListener('change', applyLayoutSettingsFromUI);
+});
+stepDurationInput?.addEventListener('input', () => {
+    if (stepDurationLabel) stepDurationLabel.textContent = `${stepDurationInput.value}s`;
+});
+
+optionPopovers.forEach(popover => {
+    const panel = popover.querySelector('.layout-advanced-panel');
+
+    popover.addEventListener('toggle', () => {
+        if (!popover.open) {
+            panel.classList.remove('is-positioned');
+            return;
+        }
+        // Only one option popover may be open at a time.
+        optionPopovers.forEach(other => { if (other !== popover) other.open = false; });
+        requestAnimationFrame(() => positionOptionPanel(popover));
+    });
+});
 
 document.addEventListener('click', e => {
-    if (!layoutAdvanced.open) return;
-    if (!layoutAdvanced.contains(e.target)) {
-        layoutAdvanced.open = false;
-    }
+    optionPopovers.forEach(popover => {
+        if (popover.open && !popover.contains(e.target)) popover.open = false;
+    });
 });
 
-layoutAdvanced.addEventListener('toggle', () => {
-    if (!layoutAdvanced.open) {
-        layoutAdvancedPanel.classList.remove('is-positioned');
-        return;
-    }
-    requestAnimationFrame(positionLayoutAdvancedPanel);
-});
+function repositionOpenOptionPanels() {
+    optionPopovers.forEach(popover => {
+        if (popover.open) positionOptionPanel(popover);
+    });
+}
 
-window.addEventListener('resize', () => {
-    if (layoutAdvanced.open) positionLayoutAdvancedPanel();
-});
-
-window.addEventListener('scroll', () => {
-    if (layoutAdvanced.open) positionLayoutAdvancedPanel();
-}, true);
+window.addEventListener('resize', repositionOpenOptionPanels);
+window.addEventListener('scroll', repositionOpenOptionPanels, true);
 
 // ── Toolbar — editor pane ──────────────────────────────────────────────────
 const autoRenderToggle = $('auto-render-toggle');
@@ -1729,11 +2503,34 @@ autoRenderToggle.addEventListener('change', async e => {
     }
 });
 
-// Template picker
-$('template-select').addEventListener('change', e => {
+// Template picker — the option groups are generated from the template registry
+// so the markup and the templates can never drift apart.
+function buildTemplateMenu(select, templates) {
+    let currentGroup = null;
+    let groupEl      = null;
+
+    for (const tpl of templates) {
+        if (tpl.group !== currentGroup) {
+            currentGroup = tpl.group;
+            groupEl = document.createElement('optgroup');
+            groupEl.label = currentGroup;
+            select.appendChild(groupEl);
+        }
+        const opt = document.createElement('option');
+        opt.value = tpl.id;
+        opt.textContent = tpl.label;
+        groupEl.appendChild(opt);
+    }
+}
+
+const templateSelect = $('template-select');
+buildTemplateMenu(templateSelect, TEMPLATES);
+
+templateSelect.addEventListener('change', e => {
     const tpl = TEMPLATES.find(t => t.id === e.target.value);
     if (tpl) {
-        if (getSource().trim() && !confirm('Replace current diagram with the template?')) {
+        // Only ask before overwriting if the current diagram was actually edited.
+        if (!isSourceUnedited() && !confirm('Replace current diagram with the template?')) {
             e.target.value = '';
             return;
         }
@@ -1843,63 +2640,123 @@ function buildFilename() {
     return `${baseName}-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`;
 }
 
+// Layout/look/theme options are stored per tab and in LS_LAYOUT_OPTS as a
+// versioned envelope (see LS_LAYOUT_OPTS_SCHEMA next to the other keys).
+
 function loadLayoutOptions() {
     const defaults = getDefaultMermaidLayoutOptions();
     try {
         const parsed = JSON.parse(localStorage.getItem(LS_LAYOUT_OPTS) || '{}');
-        return normalizeLayoutOptions({
-            ...defaults,
-            ...parsed,
-        });
+        // Older builds stored a bare options object without the newer keys;
+        // in that case start from the current defaults instead of half-migrated state.
+        if (parsed.version !== LS_LAYOUT_OPTS_SCHEMA) return { ...defaults };
+        return normalizeLayoutOptions({ ...defaults, ...parsed.options });
     } catch {
-        return defaults;
+        return { ...defaults };
     }
 }
 
 function persistLayoutOptions() {
-    localStorage.setItem(LS_LAYOUT_OPTS, JSON.stringify(layoutOptions));
+    localStorage.setItem(LS_LAYOUT_OPTS, JSON.stringify({
+        version: LS_LAYOUT_OPTS_SCHEMA,
+        options: layoutOptions,
+    }));
 }
 
 function syncLayoutControls() {
-    layoutSelect.value = layoutOptions.layout;
-    inheritDirInput.checked = layoutOptions.inheritDir;
-    elkPlacementInput.value = layoutOptions.elkNodePlacementStrategy;
-    elkMergeEdges.checked = layoutOptions.elkMergeEdges;
+    const o = layoutOptions;
+    layoutSelect.value      = o.layout;
+    lookSelect.value        = o.look;
+    inheritDirInput.checked = o.inheritDir;
+    elkPlacementInput.value = o.elkNodePlacementStrategy;
+    elkMergeEdges.checked    = o.elkMergeEdges;
+    elkFeedbackInput.checked = o.elkOrientFeedbackEdges;
+    elkEntryInput.checked    = o.elkKeepEntryNodeOnTop;
+    elkStraightenInput.checked = o.elkStraightenEdges;
+    elkLineHopsInput.checked   = o.elkLineHops;
+
+    stepNumbersInput.checked = o.flowchartStepNumbers;
+    stepDurationInput.value  = String(o.flowchartStepDuration);
+    if (stepDurationLabel) stepDurationLabel.textContent = `${o.flowchartStepDuration}s`;
+    mindmapColorInput.value = o.mindmapColorBy;
+    packetBitInput.value    = o.packetBitOrder;
+    xyLegendInput.checked   = o.xyChartShowLegend;
+    xyDataLabelInput.checked = o.xyChartShowDataLabel;
 }
 
 function updateLayoutControlsState() {
     const elkEnabled = layoutSelect.value === 'elk';
-    elkPlacementInput.disabled = !elkEnabled;
-    elkMergeEdges.disabled = !elkEnabled;
+    [elkPlacementInput, elkMergeEdges, elkFeedbackInput, elkEntryInput,
+     elkStraightenInput, elkLineHopsInput].forEach(el => { el.disabled = !elkEnabled; });
+
+    const diagramType = String(detectDiagramType());
+
+    // Grey out layout engines this diagram type rejects; the selected engine is
+    // kept visible so the user's preference is never silently overwritten.
+    for (const opt of layoutSelect.options) {
+        opt.disabled = !isLayoutSupported(opt.value, diagramType);
+    }
+    const isFallback = !isLayoutSupported(layoutOptions.layout, diagramType);
+    layoutSelect.classList.toggle('is-fallback', isFallback);
+    layoutSelect.title = isFallback
+        ? `${layoutOptions.layout.toUpperCase()} is not supported for ${diagramType} diagrams — Mermaid falls back to ${getEffectiveLayout(diagramType)}`
+        : 'Diagram layout engine';
+
+    // Step animation only exists for flowchart edges.
+    const isFlowchart = diagramType.startsWith('flowchart');
+    stepNumbersInput.disabled  = !isFlowchart;
+    stepDurationInput.disabled = !isFlowchart;
 }
 
 async function applyLayoutSettingsFromUI() {
-    layoutOptions = {
+    layoutOptions = normalizeLayoutOptions({
         ...getMermaidLayoutOptions(),
-        layout: layoutSelect.value,
-        inheritDir: inheritDirInput.checked,
+        layout:                   layoutSelect.value,
+        look:                     lookSelect.value,
+        inheritDir:               inheritDirInput.checked,
         elkNodePlacementStrategy: elkPlacementInput.value,
-        elkMergeEdges: elkMergeEdges.checked,
-    };
+        elkMergeEdges:            elkMergeEdges.checked,
+        elkOrientFeedbackEdges:   elkFeedbackInput.checked,
+        elkKeepEntryNodeOnTop:    elkEntryInput.checked,
+        elkStraightenEdges:       elkStraightenInput.checked,
+        elkLineHops:              elkLineHopsInput.checked,
+        flowchartStepNumbers:     stepNumbersInput.checked,
+        flowchartStepDuration:    stepDurationInput.value,
+        mindmapColorBy:           mindmapColorInput.value,
+        packetBitOrder:           packetBitInput.value,
+        xyChartShowLegend:        xyLegendInput.checked,
+        xyChartShowDataLabel:     xyDataLabelInput.checked,
+    });
     setMermaidLayoutOptions(layoutOptions);
     persistLayoutOptions();
     const activeTab = getActiveTab();
     if (activeTab) { activeTab.layoutOptions = { ...layoutOptions }; persistTabs(); }
+    syncLayoutControls();
     updateLayoutControlsState();
     const { errorLine, errorMsg } = await rerenderPreview(getSource());
     handleRenderResult(errorLine, errorMsg);
 }
 
-function positionLayoutAdvancedPanel() {
-    const rect = layoutAdvancedSummary.getBoundingClientRect();
-    const panelWidth = Math.max(220, layoutAdvancedPanel.offsetWidth || 220);
+function positionOptionPanel(popover) {
+    const summary = popover.querySelector('summary');
+    const panel   = popover.querySelector('.layout-advanced-panel');
+    if (!summary || !panel) return;
+
+    const rect = summary.getBoundingClientRect();
+    const panelWidth  = Math.max(220, panel.offsetWidth || 220);
+    const panelHeight = panel.offsetHeight || 260;
     const left = Math.min(
         Math.max(8, rect.right - panelWidth),
         window.innerWidth - panelWidth - 8
     );
-    layoutAdvancedPanel.style.top = `${rect.bottom + 6}px`;
-    layoutAdvancedPanel.style.left = `${left}px`;
-    layoutAdvancedPanel.classList.add('is-positioned');
+    const below = rect.bottom + 6;
+    const top   = (below + panelHeight > window.innerHeight - 8)
+        ? Math.max(8, rect.top - panelHeight - 6)
+        : below;
+
+    panel.style.top  = `${top}px`;
+    panel.style.left = `${left}px`;
+    panel.classList.add('is-positioned');
 }
 
 // ── Import button ──────────────────────────────────────────────────────────
@@ -2213,17 +3070,10 @@ function normalizeTab(tab, existingTabs = []) {
     const normalizedTabs = existingTabs.map(item => ({
         name: String(item?.name || ''),
     }));
-    const VALID_THEMES = new Set(['default', 'neutral', 'dark', 'forest', 'base']);
-    const tabMermaidTheme = VALID_THEMES.has(tab.mermaidTheme) ? tab.mermaidTheme : mermaidTheme;
-    const VALID_LAYOUTS = new Set(['elk', 'tidy-tree', 'cose-bilkent', 'dagre']);
+    const tabMermaidTheme = isValidMermaidTheme(tab.mermaidTheme) ? tab.mermaidTheme : mermaidTheme;
     const defaults = getDefaultMermaidLayoutOptions();
     const rawLayout = (tab.layoutOptions && typeof tab.layoutOptions === 'object') ? tab.layoutOptions : layoutOptions;
-    const tabLayoutOptions = {
-        layout: VALID_LAYOUTS.has(rawLayout.layout) ? rawLayout.layout : defaults.layout,
-        inheritDir: typeof rawLayout.inheritDir === 'boolean' ? rawLayout.inheritDir : defaults.inheritDir,
-        elkNodePlacementStrategy: rawLayout.elkNodePlacementStrategy ?? defaults.elkNodePlacementStrategy,
-        elkMergeEdges: typeof rawLayout.elkMergeEdges === 'boolean' ? rawLayout.elkMergeEdges : defaults.elkMergeEdges,
-    };
+    const tabLayoutOptions = normalizeLayoutOptions({ ...defaults, ...rawLayout });
     return {
         id: String(tab.id || crypto.randomUUID()),
         name: String(tab.name || buildUntitledName(normalizedTabs)),
@@ -2291,6 +3141,15 @@ function setEditorValue(src) {
     isSwitchingTabs = true;
     setSource(src);
     isSwitchingTabs = false;
+    pristineSource = src ?? '';
+}
+
+// True when the editor still matches whatever the app last put into it,
+// i.e. the user has not typed anything since.
+function isSourceUnedited() {
+    const current = getSource();
+    if (!current.trim()) return true;
+    return current.trim() === pristineSource.trim();
 }
 
 function applyTabPreviewSettings(tab) {

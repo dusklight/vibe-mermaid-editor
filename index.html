@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mermaid Diagram Editor</title>
+    <meta name="description" content="Offline-first Mermaid diagram editor: tabs, 40 templates, ELK/dagre/tidy-tree/cose-bilkent layouts, neo & handDrawn looks, built-in themes, PNG/SVG export with embedded source.">
+    <meta name="keywords" content="mermaid, mermaid diagrams, mermaid editor, diagram editor, usecase, swimlane, agentflow, wardley, treeview, cynefin, eventmodeling, railroad, venn, ishikawa, sankey, radar, treemap, kanban, packet, bpmn, elk, handDrawn, neo theme, export PNG SVG">
     <link rel="icon" type="image/svg+xml" href="./favicon.svg">
 
     <!-- CodeMirror 5 -->
@@ -126,20 +128,7 @@
             <!-- Template selector -->
             <select id="template-select" class="tb-select" title="Insert a template">
                 <option value="">Templates…</option>
-                <option value="flowchart">Flowchart</option>
-                <option value="sequence">Sequence Diagram</option>
-                <option value="class">Class Diagram</option>
-                <option value="state">State Diagram</option>
-                <option value="er">ER Diagram</option>
-                <option value="gantt">Gantt Chart</option>
-                <option value="pie">Pie Chart</option>
-                <option value="mindmap">Mind Map</option>
-                <option value="gitgraph">Git Graph</option>
-                <option value="timeline">Timeline</option>
-                <option value="quadrant">Quadrant Chart</option>
-                <option value="xychart">XY Chart</option>
-                <option value="userjourney">User Journey</option>
-                <option value="c4">C4 Diagram</option>
+                <!-- Option groups are generated from the template registry in js/app.js -->
             </select>
 
             <div class="tb-sep"></div>
@@ -220,6 +209,7 @@
         <div class="editor-status">
             <span id="status-line">Ln 1, Col 1</span>
             <span class="status-badge" id="status-type">diagram</span>
+            <span class="status-badge status-lib-badge" id="status-lib-version" title="Mermaid library version used for rendering"></span>
             <button class="status-error" id="status-error" aria-haspopup="true" aria-expanded="false" title="Click to expand error details" hidden></button>
         </div>
 
@@ -291,6 +281,12 @@
                     <option value="dark">Dark</option>
                     <option value="forest">Forest</option>
                     <option value="base">Base</option>
+                    <option value="neo">Neo</option>
+                    <option value="neo-dark">Neo Dark</option>
+                    <option value="redux">Redux</option>
+                    <option value="redux-dark">Redux Dark</option>
+                    <option value="redux-color">Redux Color</option>
+                    <option value="redux-dark-color">Redux Dark Color</option>
                 </select>
             </div>
 
@@ -307,6 +303,20 @@
                     <option value="tidy-tree">Tidy tree</option>
                     <option value="cose-bilkent">Cose Bilkent</option>
                     <option value="dagre">Dagre</option>
+                </select>
+            </div>
+
+            <!-- diagram look (neo / classic / handDrawn) -->
+            <div class="mmd-layout-wrap">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                    <path d="M15.5 3.5 20 8 8.5 19.5 4 20l.5-4.5Z"></path>
+                    <path d="M13.5 5.5 18 10"></path>
+                </svg>
+                <select id="look-select" class="mmd-layout-select" title="Diagram look">
+                    <option value="auto">Auto</option>
+                    <option value="neo">Neo</option>
+                    <option value="classic">Classic</option>
+                    <option value="handDrawn">Hand-drawn</option>
                 </select>
             </div>
 
@@ -329,6 +339,59 @@
                     <label class="layout-option-row">
                         <input id="elk-merge-edges" type="checkbox">
                         <span>Merge parallel edges</span>
+                    </label>
+                    <label class="layout-option-row">
+                        <input id="elk-orient-feedback-edges" type="checkbox">
+                        <span>Point feedback edges to first node</span>
+                    </label>
+                    <label class="layout-option-row">
+                        <input id="elk-keep-entry-node-on-top" type="checkbox">
+                        <span>Keep entry node on top</span>
+                    </label>
+                    <label class="layout-option-row">
+                        <input id="elk-straighten-edges" type="checkbox">
+                        <span>Straighten edges</span>
+                    </label>
+                    <label class="layout-option-row">
+                        <input id="elk-line-hops" type="checkbox">
+                        <span>Draw line hops over crossings</span>
+                    </label>
+                </div>
+            </details>
+
+            <!-- diagram-specific options -->
+            <details id="diagram-advanced" class="layout-advanced">
+                <summary>Diagram options</summary>
+                <div class="layout-advanced-panel">
+                    <label class="layout-option-row">
+                        <input id="opt-step-numbers" type="checkbox">
+                        <span>Flowchart: show step numbers</span>
+                    </label>
+                    <label class="layout-option-stack">
+                        <span>Flowchart: step duration <span id="opt-step-duration-value">1s</span></span>
+                        <input id="opt-step-duration" class="layout-option-range" type="range" min="0.5" max="4" step="0.5">
+                    </label>
+                    <label class="layout-option-stack">
+                        <span>Mind map: color by</span>
+                        <select id="opt-mindmap-color-by" class="layout-option-select">
+                            <option value="branch">Branch</option>
+                            <option value="depth">Depth</option>
+                        </select>
+                    </label>
+                    <label class="layout-option-stack">
+                        <span>Packet: bit order</span>
+                        <select id="opt-packet-bit-order" class="layout-option-select">
+                            <option value="ascending">Ascending (low bits first)</option>
+                            <option value="descending">Descending (high bits first)</option>
+                        </select>
+                    </label>
+                    <label class="layout-option-row">
+                        <input id="opt-xy-legend" type="checkbox">
+                        <span>XY chart: show legend</span>
+                    </label>
+                    <label class="layout-option-row">
+                        <input id="opt-xy-data-label" type="checkbox">
+                        <span>XY chart: show data labels</span>
                     </label>
                 </div>
             </details>

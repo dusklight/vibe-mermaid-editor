@@ -1,10 +1,10 @@
 # Vibe Mermaid Diagram Editor
 
-➡️ Try it out here: <a href="https://dusklight.github.io/vibe-mermaid-editor/" target="_blank" rel="noopener noreferrer">Vibe Mermaid Diagram Editor</a>
+➡️ Try it: <a href="https://dusklight.github.io/vibe-mermaid-editor/" target="_blank" rel="noopener noreferrer">Vibe Mermaid Diagram Editor</a>
 
-A fully client-side, zero-installation browser app for creating and exporting Mermaid diagrams.
+A fully client-side, zero-install browser app for creating and exporting [Mermaid](https://mermaid.js.org/) diagrams.
 
-🤖 Completely vibe-coded: Built using Sonnet 4.6 and GPT-5.4 via ~30 chat interactions in the VS Code Copilot and Codex extensions.
+🤖 Initially built with Sonnet 4.6 and GPT-5.4 across ~30 chat interactions in the VS Code Copilot and Codex extensions. Subsequent updates locally with Qwen 3.8 Flash Next on Strata.
 
 ![Vibe Mermaid Diagram Editor screenshot](./assets/VibeMermaidEditorScreenshot2026-03-22.png)
 
@@ -12,61 +12,52 @@ A fully client-side, zero-installation browser app for creating and exporting Me
 
 ## Features
 
-- **Source round-tripping** — exported files embed the original Mermaid source (PNG: `tEXt` chunk; SVG: `data-mermaid-source` attribute). Drag an exported file back in to instantly restore the diagram.
-    - **Export options** — PNG (1×, 2×, or current zoom), SVG, or preview in a new tab without saving.
-    - **Drag-and-drop import** — drop a PNG, SVG, `.mmd`, or `.md` file onto the editor or preview pane to load it.
-- **Multi-tab editing** — independent editor state, zoom, and pan per tab.
-- **Live split-pane editing** — resizable editor/preview layout with auto-render option or manual render via **Ctrl+Enter**.
-- **Four layout engines** — Dagre (default), ELK (with advanced node/edge controls), Tidy Tree, and Cose Bilkent.
-- **14 built-in templates** — Flowchart, Sequence, Class, State, ER, Gantt, Pie, Mind Map, Git Graph, Timeline, Quadrant Chart, XY Chart, User Journey, C4 Diagram.
-- **Rich code editor** — Syntax highlighting, bracket matching, auto-close, find/replace, autocomplete, line wrap toggle, and a status bar with inline parse errors.
-- **Zoom, pan, and fit** — mouse-wheel zoom, click-and-drag pan, pinch-to-zoom, fit-to-screen (**Ctrl+Shift+F**), and a custom zoom input.
-- **Five diagram themes** — Default, Neutral, Dark, Forest, Base.
-- **Dark/light app theme** — single toggle in the header.
+- **Source round-tripping** — exported files embed the original Mermaid source (PNG `tEXt` chunk, SVG `data-mermaid-source` attribute); drag an exported file back in to restore the diagram.
+- **Import & export** — drag in a PNG, SVG, `.mmd`, or `.md` file; export PNG (1×, 2×, or current zoom), SVG, or preview in a new tab.
+- **Multi-tab editing** — independent state, zoom, and pan per tab.
+- **Live split-pane editing** — resizable editor/preview, auto-render or manual render (**Ctrl+Enter**).
+- **Four layout engines** — ELK (default, bundled with Mermaid), Dagre, Tidy Tree, Cose Bilkent. Unsupported engines are grayed out; a stale choice silently falls back and flags the selector in amber.
+- **ELK controls** — node placement strategy, edge merging, feedback-edge orientation, entry-node pinning, edge straightening, line hops.
+- **Diagram options panel** — per-diagram switches: flowchart edge animation, mind-map coloring, packet bit order, XY-chart legend/labels, `flowchart.inheritDir`.
+- **Three rendering looks** — Classic, Neo, hand-drawn (rough.js), over Mermaid's built-in themes.
+- **40 built-in templates** — every diagram type supported by the loaded Mermaid version, including `usecase-beta`, `swimlane-beta`, `agentflow-beta`, `treeView-beta`, `treemap-beta`, `wardley-beta`, `cynefin-beta`, `eventmodeling`, `radar-beta`, four Railroad grammars, Ishikawa, and Venn.
+- **Rich code editor** — syntax highlighting for the current Mermaid grammar, bracket matching, auto-close, find/replace, autocomplete, line-wrap toggle, status bar with inline parse errors.
+- **Zoom, pan, fit** — wheel zoom, drag pan, pinch zoom, fit-to-screen (**Ctrl+Shift+F**), custom zoom input.
+- **Dark/light app theme** — header toggle, independent of the diagram theme.
 
----
+## Structure & architecture
 
-## Project structure
+No build step: native ES modules and plain JavaScript, loaded from CDN.
 
 ```
 /
-├── index.html        # Single HTML page; markup, CDN imports, UI wiring
-├── css/
-│   └── styles.css    # All styles; CSS custom properties (design tokens) at the top
-└── js/
-    └── app.js        # All application logic, implemented as one async IIFE
+├── index.html        # Markup, CDN imports, UI wiring
+├── css/styles.css    # All styles; design tokens in :root, overridden in body.dark
+└── js/app.js         # All logic, as one async IIFE
 ```
 
-## Architecture
-
-The entire application is a single async IIFE (`app.js`) that boots after the CDN modules resolve. Inside it, logical concerns are separated into module-like closures that return explicit public APIs:
+Inside `app.js`, concerns are split into module-like closures with explicit public APIs:
 
 | Closure | Responsibility |
 |---|---|
-| `MermaidEditorMermaidApi` | Wraps the Mermaid library; handles layout engine registration, configuration, and the off-screen render host |
-| `MermaidEditorTemplates` | Owns the 14 built-in diagram templates and the default diagram shown on first load |
-| `MermaidEditorExport` | PNG and SVG export/import; source embedding and extraction; CRC32 for PNG `tEXt` chunks |
-| `MermaidEditorPreview` | Rendering pipeline, zoom/pan state, debounced render scheduling, Mermaid theme switching |
+| `MermaidEditorMermaidApi` | Wraps Mermaid; layout loader, per-diagram config, off-screen render host |
+| `MermaidEditorTemplates` | The 40 templates and the default first-load diagram |
+| `MermaidEditorExport` | PNG/SVG export & import, source embedding, CRC32 for `tEXt` chunks |
+| `MermaidEditorPreview` | Render pipeline, zoom/pan state, debounced scheduling, theme switching |
 
-The main body of the IIFE wires these modules together and owns the DOM interactions (tabs, toolbar buttons, CodeMirror setup, keyboard shortcuts, drag-and-drop, local-storage persistence).
+The IIFE body wires these together and owns DOM interaction (tabs, toolbar, CodeMirror, shortcuts, drag-and-drop, persistence).
 
-## Styling conventions
+Styling is token-driven: colors, spacing, and component tokens are declared once in `:root` and overridden in `body.dark`, so a new color scheme only touches the declarations.
 
-`styles.css` is built around CSS custom properties. All colors, spacing constants, and component-level tokens are declared once in `:root` and overridden in `body.dark`. To change a color scheme, only the token declarations need to change — no selector hunting required.
+## Persistence
 
-## Source embedding implementation
+Tab content, active tab, app theme, and diagram theme are saved to `localStorage` automatically. Rendering options live under `mermaid-editor-layout-options` as a versioned envelope (`{ version: 2, options: { … } }`) validated key by key on load, so a schema bump or hand-edited entry falls back to defaults rather than feeding Mermaid unknown values. Each tab also stores its own layout/look/options snapshot.
 
-The round-trip import/export feature is implemented entirely in `MermaidEditorExport` without any external library:
+## Source embedding
 
-- **PNG**: A conforming `tEXt` chunk is constructed by hand — 4-byte length, 4-byte type, keyword + NUL + value payload, and a CRC-32 checksum computed with a precomputed lookup table. The chunk is spliced into the PNG binary immediately after the `IHDR` chunk.
-- **SVG**: The source is UTF-8 encoded, then base64-encoded with `btoa`, and written as a `data-mermaid-source` attribute on the root `<svg>` element before the file is saved.
+Implemented in `MermaidEditorExport` with no external library:
 
-On import, both paths are reversed: PNG chunks are walked to find `MermaidSource`, and the SVG attribute value is base64-decoded.
+- **PNG** — a conforming `tEXt` chunk built by hand (length, type, keyword + NUL + payload, CRC-32 from a precomputed table), spliced in after `IHDR`.
+- **SVG** — source UTF-8 → base64 (`btoa`), written as `data-mermaid-source` on the root `<svg>`.
 
-## No build step
-
-There is intentionally no bundler, transpiler, or build tool. The codebase uses native ES modules (`import()` for async CDN loads) and plain JavaScript.
-
-## Local storage
-
-Tab content, the active tab index, and the current Mermaid diagram theme are persisted to `localStorage` automatically, so work is not lost on a page reload.
+Import reverses both: PNG chunks are walked for `MermaidSource`, and the SVG attribute is base64-decoded.
